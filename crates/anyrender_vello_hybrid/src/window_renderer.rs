@@ -177,6 +177,9 @@ pub struct VelloHybridWindowRenderer {
     /// The persistent target holds a complete frame at the current size, so a
     /// damaged frame can repaint part of it.
     has_full_frame: bool,
+    /// Measurement only (`ANYRENDER_FRAME_LIMIT_HZ`): when the last frame
+    /// was presented, to pace frames like vsync without a display.
+    last_present: Option<std::time::Instant>,
 }
 impl VelloHybridWindowRenderer {
     #[allow(clippy::new_without_default)]
@@ -196,6 +199,7 @@ impl VelloHybridWindowRenderer {
             scene: VelloHybridScene::new_with(0, 0, render_settings.level),
             cached_images: ImageCache::default(),
             has_full_frame: false,
+            last_present: None,
         }
     }
 
@@ -696,6 +700,20 @@ impl VelloHybridWindowRenderer {
             "present"
         });
 
+        // Measurement only: pace presents to ANYRENDER_FRAME_LIMIT_HZ, as
+        // vsync would, when no display paces them (screen off, Xvfb).
+        static FRAME_LIMIT: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+        if let Some(hz) = *FRAME_LIMIT.get_or_init(|| {
+            std::env::var("ANYRENDER_FRAME_LIMIT_HZ").ok().and_then(|v| v.parse().ok())
+        }) {
+            let period = std::time::Duration::from_secs_f64(1.0 / hz);
+            let now = std::time::Instant::now();
+            let due = self.last_present.map_or(now, |last| last + period);
+            if due > now {
+                std::thread::sleep(due - now);
+            }
+            self.last_present = Some(due.max(now));
+        }
 
         render_surface
             .device()
