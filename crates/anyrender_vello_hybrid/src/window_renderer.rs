@@ -409,7 +409,13 @@ impl WindowRenderer for VelloHybridWindowRenderer {
                     formats: vec![DEFAULT_TEXTURE_FORMAT],
                     width,
                     height,
-                    present_mode: PresentMode::AutoVsync,
+                    // Measurement only: ANYRENDER_PRESENT_MODE=immediate or
+                    // mailbox runs frames unthrottled.
+                    present_mode: match std::env::var("ANYRENDER_PRESENT_MODE").as_deref() {
+                        Ok("immediate") => PresentMode::AutoNoVsync,
+                        Ok("mailbox") => PresentMode::Mailbox,
+                        _ => PresentMode::AutoVsync,
+                    },
                     desired_maximum_frame_latency,
                     alpha_mode: composite_alpha_mode,
                     view_formats: vec![],
