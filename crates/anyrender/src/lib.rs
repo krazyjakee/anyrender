@@ -150,6 +150,24 @@ pub trait WindowRenderer: RenderContext {
     }
     fn set_size(&mut self, width: u32, height: u32);
     fn render<F: FnOnce(&mut Self::ScenePainter<'_>)>(&mut self, draw_fn: F);
+
+    /// Whether [`render_damage`](Self::render_damage) can repaint part of the
+    /// window now: the backend keeps the previous frame's pixels and has a
+    /// complete frame at the current size. Defaults to `false`.
+    fn supports_damage(&self) -> bool {
+        false
+    }
+
+    /// Render a frame in which only `damage` (in surface pixels) differs from
+    /// the previous one. `draw_fn` only needs to draw what intersects
+    /// `damage`; the backend clips to it and keeps every pixel outside it.
+    ///
+    /// Only call this while [`supports_damage`](Self::supports_damage) returns
+    /// `true`. The default ignores `damage` and renders a full frame.
+    fn render_damage<F: FnOnce(&mut Self::ScenePainter<'_>)>(&mut self, damage: Rect, draw_fn: F) {
+        let _ = damage;
+        self.render(draw_fn)
+    }
 }
 
 /// Abstraction for rendering a scene to an image buffer

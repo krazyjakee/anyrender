@@ -304,6 +304,12 @@ impl<'s> SurfaceRenderer<'s> {
             .ok_or(GetCurrentSurfaceTextureErr)
     }
 
+    /// Whether rendering goes to an intermediate texture, which keeps its
+    /// contents between frames (unlike the swapchain's textures).
+    pub fn has_intermediate_texture(&self) -> bool {
+        self.intermediate_texture.is_some()
+    }
+
     /// Get a target texture view to render to.
     ///
     /// If there is an intermediate texture, this is a view of that intermediate texture, otherwise
