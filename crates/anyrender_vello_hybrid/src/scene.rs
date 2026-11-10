@@ -243,6 +243,66 @@ pub struct VelloHybridScenePainter<'s> {
     pub(crate) texture_bindings: &'s mut FxHashMap<ResourceId, TextureView>,
     pub(crate) device_handle: &'s DeviceHandle,
     pub(crate) glyph_caching: bool,
+    /// The damage rectangle (scene coordinates) of a damaged frame: nothing
+    /// outside it is drawn, so fills are cut down to it.
+    pub(crate) damage: Option<kurbo::Rect>,
+}
+
+/// The part of a fill of `shape` (under `transform`) that lands in `damage`,
+/// as a rectangle in the shape's own coordinates, when that is exact: a
+/// rectangle, or a convex box path covering the damage, under a transform
+/// without rotation or skew. `Some(empty)` means nothing lands there.
+fn fill_within_damage(
+    shape: &impl Shape,
+    transform: Affine,
+    damage: kurbo::Rect,
+) -> Option<kurbo::Rect> {
+    let [_, b, c, _, _, _] = transform.as_coeffs();
+    if b != 0.0 || c != 0.0 || transform.determinant().abs() < 1e-12 {
+        return None;
+    }
+    let local = transform.inverse().transform_rect_bbox(damage);
+    if let Some(rect) = shape.as_rect() {
+        return Some(rect.intersect(local));
+    }
+    if !shape.bounding_box().contains_rect(local) {
+        return None;
+    }
+    // Box paths can be left open (they fill as closed): close each subpath.
+    let mut closed = kurbo::BezPath::new();
+    let mut open = false;
+    let mut subpaths = 0;
+    for el in shape.path_elements(0.1) {
+        match el {
+            kurbo::PathEl::MoveTo(_) => {
+                if open {
+                    closed.close_path();
+                }
+                subpaths += 1;
+                open = false;
+                closed.push(el);
+            }
+            kurbo::PathEl::ClosePath => {
+                open = false;
+                closed.push(el);
+            }
+            _ => {
+                open = true;
+                closed.push(el);
+            }
+        }
+    }
+    if open {
+        closed.close_path();
+    }
+    // One subpath (a convex box): if all four corners are inside, so is the rect.
+    let corners = [
+        kurbo::Point::new(local.x0, local.y0),
+        kurbo::Point::new(local.x1, local.y0),
+        kurbo::Point::new(local.x0, local.y1),
+        kurbo::Point::new(local.x1, local.y1),
+    ];
+    (subpaths == 1 && corners.iter().all(|corner| closed.contains(*corner))).then_some(local)
 }
 
 impl VelloHybridScenePainter<'_> {
@@ -253,6 +313,7 @@ impl VelloHybridScenePainter<'_> {
         device_handle: &'s DeviceHandle,
     ) -> VelloHybridScenePainter<'s> {
         VelloHybridScenePainter {
+            damage: None,
             scene,
             layer_stack: Vec::with_capacity(16),
             image_manager,
@@ -392,13 +453,21 @@ impl PaintScene for VelloHybridScenePainter<'_> {
         brush_transform: Option<Affine>,
         shape: &impl Shape,
     ) {
+        // In a damaged frame only the damage is drawn: fill no more of a big
+        // box than lands in it.
+        let within = self
+            .damage
+            .and_then(|damage| fill_within_damage(shape, transform, damage));
+        if within.is_some_and(|rect| rect.is_zero_area()) {
+            return;
+        }
         self.scene.set_transform(transform);
         self.scene.set_fill_rule(style);
         let paint = self.convert_paint(paint.into());
         self.scene.set_paint(paint);
         self.scene
             .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
-        if let Some(rect) = shape.as_rect() {
+        if let Some(rect) = within.or_else(|| shape.as_rect()) {
             self.scene.fill_rect(&rect);
         } else {
             self.scene.fill_path(&shape.into_path(DEFAULT_TOLERANCE));

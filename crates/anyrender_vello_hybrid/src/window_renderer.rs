@@ -592,6 +592,7 @@ impl VelloHybridWindowRenderer {
             texture_bindings: &mut state.texture_bindings,
             device_handle: &render_surface.device_handle,
             glyph_caching: self.config.glyph_caching,
+            damage,
         };
         if let Some(damage) = damage {
             scene_painter.push_clip_layer(peniko::Fill::NonZero, kurbo::Affine::IDENTITY, &damage);
@@ -683,7 +684,11 @@ impl VelloHybridWindowRenderer {
             self.scene.reset();
             return;
         }
-        timer.record_time(if damage.is_some() { "present(damage)" } else { "present" });
+        timer.record_time(if damage.is_some() {
+            "present(damage)"
+        } else {
+            "present"
+        });
 
 
         render_surface
